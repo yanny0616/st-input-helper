@@ -1005,30 +1005,112 @@ function insertToolbar(toolbarHtml, target, position = "beforeend") {
     const existingToolbar = document.getElementById("input_helper_toolbar");
 
     if (existingToolbar) {
+        if (existingToolbar.parentElement === target && position === "beforeend") {
+            return { toolbar: existingToolbar, changed: false };
+        }
+        if (existingToolbar.nextElementSibling === target && position === "beforebegin") {
+            return { toolbar: existingToolbar, changed: false };
+        }
+        if (existingToolbar.parentElement === target && target.firstElementChild === existingToolbar && position === "afterbegin") {
+            return { toolbar: existingToolbar, changed: false };
+        }
+
         target.insertAdjacentElement(position, existingToolbar);
+        return { toolbar: existingToolbar, changed: true };
     } else {
         target.insertAdjacentHTML(position, toolbarHtml);
+        return { toolbar: document.getElementById("input_helper_toolbar"), changed: true };
     }
 }
 
 let qrBarObserver = null;
+let qrBarObserverTimer = null;
+let cachedToolbarHtml = "";
+let settingsLoaded = false;
+
+function bindDefaultToolbarEvents() {
+    const toolbar = $("#input_helper_toolbar");
+    if (toolbar.length === 0) return;
+
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+    toolbar.off("mousedown.inputHelperToolbar touchstart.inputHelperToolbar");
+
+    if (isMobile) {
+        toolbar.on("mousedown.inputHelperToolbar touchstart.inputHelperToolbar", function(e) {
+            e.preventDefault();
+        });
+
+        rebindMobileEventListeners();
+        return;
+    }
+
+    $("#input_asterisk_btn").off("click").on("click.inputHelperToolbar", insertAsterisk);
+    $("#input_quotes_btn").off("click").on("click.inputHelperToolbar", insertQuotes);
+    $("#input_newline_btn").off("click").on("click.inputHelperToolbar", insertNewLine);
+    $("#input_user_btn").off("click").on("click.inputHelperToolbar", insertUserTag);
+    $("#input_char_btn").off("click").on("click.inputHelperToolbar", insertCharTag);
+    $("#input_parentheses_btn").off("click").on("click.inputHelperToolbar", insertParentheses);
+    $("#input_book_quotes1_btn").off("click").on("click.inputHelperToolbar", insertBookQuotes1);
+    $("#input_book_quotes2_btn").off("click").on("click.inputHelperToolbar", insertBookQuotes2);
+    $("#input_book_quotes3_btn").off("click").on("click.inputHelperToolbar", insertBookQuotes3);
+}
+
+function refreshToolbarAfterMount() {
+    if (settingsLoaded) {
+        loadCustomSymbolButtons();
+        updateButtonVisibility();
+    }
+
+    bindDefaultToolbarEvents();
+    notifyQuickReplyAssistant();
+}
+
+function mountToolbarNow(toolbarHtml) {
+    const qrBar = document.getElementById("qr--bar");
+
+    if (qrBar) {
+        const result = insertToolbar(toolbarHtml, qrBar);
+        if (result.changed) {
+            refreshToolbarAfterMount();
+        }
+        return true;
+    }
+
+    const nonQrFormItems = document.getElementById("nonQRFormItems");
+    if (nonQrFormItems) {
+        const result = insertToolbar(toolbarHtml, nonQrFormItems, "beforebegin");
+        if (result.changed) {
+            refreshToolbarAfterMount();
+        }
+        return true;
+    }
+
+    const sendForm = document.getElementById("send_form");
+    if (sendForm) {
+        const result = insertToolbar(toolbarHtml, sendForm, "afterbegin");
+        if (result.changed) {
+            refreshToolbarAfterMount();
+        }
+        return true;
+    }
+
+    return false;
+}
+
 function observeQrBarForToolbar() {
     if (qrBarObserver) return;
 
     qrBarObserver = new MutationObserver(() => {
-        const qrBar = document.getElementById("qr--bar");
-        const toolbar = document.getElementById("input_helper_toolbar");
-
-        if (qrBar && toolbar && toolbar.parentElement !== qrBar) {
-            qrBar.append(toolbar);
-            notifyQuickReplyAssistant();
-        }
+        clearTimeout(qrBarObserverTimer);
+        qrBarObserverTimer = setTimeout(() => mountToolbarNow(cachedToolbarHtml), 50);
     });
 
     qrBarObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 async function mountInputHelperToolbar(toolbarHtml) {
+    cachedToolbarHtml = toolbarHtml;
     observeQrBarForToolbar();
 
     const maxWaitMs = 3000;
@@ -1036,27 +1118,14 @@ async function mountInputHelperToolbar(toolbarHtml) {
     const deadline = Date.now() + maxWaitMs;
 
     while (Date.now() < deadline) {
-        const qrBar = document.getElementById("qr--bar");
-
-        if (qrBar) {
-            insertToolbar(toolbarHtml, qrBar);
-            notifyQuickReplyAssistant();
+        if (document.getElementById("qr--bar") && mountToolbarNow(toolbarHtml)) {
             return;
         }
 
         await wait(pollIntervalMs);
     }
 
-    const nonQrFormItems = document.getElementById("nonQRFormItems");
-    if (nonQrFormItems) {
-        insertToolbar(toolbarHtml, nonQrFormItems, "beforebegin");
-        return;
-    }
-
-    const sendForm = document.getElementById("send_form");
-    if (sendForm) {
-        insertToolbar(toolbarHtml, sendForm, "afterbegin");
-    }
+    mountToolbarNow(toolbarHtml);
 }
 
 // 初始化插件
@@ -1070,30 +1139,7 @@ jQuery(async () => {
 
     await mountInputHelperToolbar(toolbarHtml);
 
-    // 移动设备优化：防止按钮点击导致键盘消失和重新出现
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (isMobile) {
-        // 在移动设备上，阻止工具栏按钮的默认行为，避免输入框失焦
-        $("#input_helper_toolbar").on("mousedown touchstart", function(e) {
-            e.preventDefault(); // 阻止默认行为
-            // 不阻止冒泡，以便点击事件仍然被处理
-        });
-
-        // 初始绑定移动设备触摸事件 - 使用统一的函数便于重新绑定
-        rebindMobileEventListeners();
-    } else {
-        // 桌面端使用原有的点击事件
-        $("#input_asterisk_btn").on("click", insertAsterisk);
-        $("#input_quotes_btn").on("click", insertQuotes);
-        $("#input_newline_btn").on("click", insertNewLine);
-        $("#input_user_btn").on("click", insertUserTag);
-        $("#input_char_btn").on("click", insertCharTag);
-        $("#input_parentheses_btn").on("click", insertParentheses);
-        $("#input_book_quotes1_btn").on("click", insertBookQuotes1);
-        $("#input_book_quotes2_btn").on("click", insertBookQuotes2);
-        $("#input_book_quotes3_btn").on("click", insertBookQuotes3);
-        // 动态添加的自定义按钮会在创建时绑定事件
-    }
+    bindDefaultToolbarEvents();
 
     // 注册事件监听
     $("#insert_quotes_button").on("click", insertQuotes);
@@ -1115,6 +1161,8 @@ jQuery(async () => {
 
     // 加载设置
     await loadSettings();
+    settingsLoaded = true;
+    refreshToolbarAfterMount();
 
     // 设置快捷键输入框
     setupShortcutInputs();
