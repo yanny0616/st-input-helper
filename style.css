@@ -55,12 +55,6 @@
     border-top: none;  /* 移除顶部边框 */
 }
 
-/* 强制修复在某些主题下可能的层叠问题 */
-#send_form {
-    display: flex;
-    flex-direction: column;
-}
-
 /* 按钮样式匹配menu_button和QR按钮 */
 .input-helper-btn {
     color: var(--SmartThemeBodyColor);

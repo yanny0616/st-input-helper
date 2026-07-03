@@ -989,6 +989,76 @@ function showCustomSymbolDialog(existingSymbol = null, editIndex = -1) {
     });
 }
 
+function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function notifyQuickReplyAssistant() {
+    try {
+        window.quickReplyMenu?.applyWhitelistDOMChanges?.();
+    } catch (error) {
+        console.warn("刷新 QR 助手白名单状态失败:", error);
+    }
+}
+
+function insertToolbar(toolbarHtml, target, position = "beforeend") {
+    const existingToolbar = document.getElementById("input_helper_toolbar");
+
+    if (existingToolbar) {
+        target.insertAdjacentElement(position, existingToolbar);
+    } else {
+        target.insertAdjacentHTML(position, toolbarHtml);
+    }
+}
+
+let qrBarObserver = null;
+function observeQrBarForToolbar() {
+    if (qrBarObserver) return;
+
+    qrBarObserver = new MutationObserver(() => {
+        const qrBar = document.getElementById("qr--bar");
+        const toolbar = document.getElementById("input_helper_toolbar");
+
+        if (qrBar && toolbar && toolbar.parentElement !== qrBar) {
+            qrBar.append(toolbar);
+            notifyQuickReplyAssistant();
+        }
+    });
+
+    qrBarObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+async function mountInputHelperToolbar(toolbarHtml) {
+    observeQrBarForToolbar();
+
+    const maxWaitMs = 3000;
+    const pollIntervalMs = 100;
+    const deadline = Date.now() + maxWaitMs;
+
+    while (Date.now() < deadline) {
+        const qrBar = document.getElementById("qr--bar");
+
+        if (qrBar) {
+            insertToolbar(toolbarHtml, qrBar);
+            notifyQuickReplyAssistant();
+            return;
+        }
+
+        await wait(pollIntervalMs);
+    }
+
+    const nonQrFormItems = document.getElementById("nonQRFormItems");
+    if (nonQrFormItems) {
+        insertToolbar(toolbarHtml, nonQrFormItems, "beforebegin");
+        return;
+    }
+
+    const sendForm = document.getElementById("send_form");
+    if (sendForm) {
+        insertToolbar(toolbarHtml, sendForm, "afterbegin");
+    }
+}
+
 // 初始化插件
 jQuery(async () => {
     // 加载HTML
@@ -998,15 +1068,7 @@ jQuery(async () => {
     // 加载输入工具栏HTML
     const toolbarHtml = await $.get(`${extensionFolderPath}/toolbar.html`);
 
-    // 将工具栏插入到 #qr--bar 下方，并确保正确的视觉顺序
-    const $qrBar = $("#qr--bar");
-    console.log($qrBar.length)
-    if ($qrBar.length == 0) {
-        $("#send_form").append(
-            '<div class="flex-container flexGap5" id="qr--bar"></div>'
-        );
-    }
-    $("#qr--bar").append(toolbarHtml);
+    await mountInputHelperToolbar(toolbarHtml);
 
     // 移动设备优化：防止按钮点击导致键盘消失和重新出现
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
